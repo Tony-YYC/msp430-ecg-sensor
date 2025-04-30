@@ -3,18 +3,13 @@
   margin: (x: 2.5cm, y: 2.5cm),
 )
 
-#set text(
-  font: (
-    "Times New Roman",
-    "SimSun"
-  )
-)
+#import "@preview/cuti:0.3.0": show-cn-fakebold
+#show: show-cn-fakebold
 
 #let heading-font = ("Times New Roman","SimHei")
+#let body-font = ("Times New Roman","SimSun")
 
-// 为特定语言设置字体
-#set text(lang: "zh", font: "SimSun")
-#set text(lang: "en", font: "Times New Roman")
+#set text(font: body-font, lang: "zh") // 设置正文默认字体和语言
 
 #set heading(numbering: "1.")
 #show heading: set text(font: heading-font, weight: "bold")
@@ -26,7 +21,7 @@
 )
 
 #align(center)[
-  #text(font: heading-font, size: 16pt, weight: "bold")[
+  #text(font: heading-font, size: 20pt, weight: "bold")[
     标题
   ]
 ]
