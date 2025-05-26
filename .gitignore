@@ -32,7 +32,7 @@ target/
 #################
 
 *.pydevproject
-.project
+# .project
 .metadata
 bin/
 tmp/
@@ -52,7 +52,7 @@ local.properties
 *.launch
 
 # CDT-specific
-.cproject
+# .cproject
 
 # PDT-specific
 .buildpath
@@ -243,3 +243,6 @@ pip-log.txt
 
 #Mr Developer
 .mr.developer.cfg
+
+#clangd commands
+.clangd
