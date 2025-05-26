@@ -10,7 +10,7 @@
 
 // Buffer to store ADC samples
 #define NUM_SAMPLES 300
-volatile unsigned int adc_data[NUM_SAMPLES];
+unsigned int adc_data[NUM_SAMPLES];
 
 // Flag to indicate DMA transfer completion
 volatile unsigned char dma_done_flag = 0;
@@ -37,9 +37,13 @@ void main(void) {
 
     __bis_SR_register(GIE); // Enable Global Interrupts
 
-    // ADC and DMA are now running. Timer triggers ADC, ADC triggers DMA.
-    // Wait for DMA to complete 500 transfers.
-    while (!dma_done_flag) {
+    while (1) {
+        // ADC and DMA are now running. Timer triggers ADC, ADC triggers DMA.
+        // Wait for DMA to complete 300 transfers.
+        while (!dma_done_flag) {
+        }
+        // DMA transfer of 300 samples is complete.
+        // adc_data array now contains the samples.
         // process the data captured by ADC here.
         etft_DisplayADCVoltage(adc_data, NUM_SAMPLES, (0x3F << 5), 0);
 
@@ -49,24 +53,9 @@ void main(void) {
 
         // 2. Restart Timer_A0 to begin triggering ADC conversions for the next block
         TA0CTL = TASSEL__SMCLK | MC__UP | TACLR; // TACLR ensures it starts fresh
-    }
 
-    // DMA transfer of 500 samples is complete.
-    // adc_data array now contains the samples.
-    // You can now disable ADC/Timer if no more acquisitions are needed.
-    TA0CTL = 0; // Stop Timer_A0
-    ADC12CTL0 &= ~ADC12ENC; // Disable ADC conversions
-    ADC12CTL0 &= ~ADC12ON; // Turn off ADC
-
-    // At this point, adc_data[] is filled with 500 samples.
-    // Perform further data processing as needed.
-    // For example, toggle an LED to indicate completion.
-    P1DIR |= BIT0;
-    P1OUT |= BIT0; // Turn on P1.0 LED
-
-    while (1) {
-        // Program finished data acquisition and initial processing.
-        // Loop indefinitely or perform other tasks.
+        // toggle an LED to indicate completion.
+        P4OUT ^= BIT5; // Turn on P4.5 LED
     }
 }
 
@@ -122,8 +111,9 @@ void init_gpio(void) {
     P6DIR &= ~BIT7; // Set P6.7 as input
 
     // Example LED (optional, for debugging)
-    // P1DIR |= BIT0;
-    // P1OUT &= ~BIT0;
+    P4DIR |= BIT5;
+    P4REN |= BIT5;
+    P4OUT &= ~BIT5;
 }
 
 void init_timer_for_adc(void) {
@@ -166,7 +156,7 @@ void init_adc(void) {
     // ADC12SHSx: Sample-and-hold source select. Select Timer_A0 TA0.1 output. (Value is 1 for TA0.1) [cite: 226]
     // ADC12CONSEQx: Conversion sequence mode. 00b for single-channel, single-conversion. [cite: 125, 226]
     // ADC12SSELx: ADC12 clock source select. Example: SMCLK. [cite: 226]
-    ADC12CTL1 = ADC12SHP | ADC12SHS_1 | ADC12CONSEQ_0 | ADC12SSEL_3; // SMCLK
+    ADC12CTL1 = ADC12SHP | ADC12SHS_1 | ADC12CONSEQ_2 | ADC12SSEL_3; // SMCLK
     // ADC12SHS_1 corresponds to TA0.1
 
     // ADC12CTL2 configuration (optional, defaults are often fine for basic use)
@@ -220,20 +210,14 @@ void init_dma_for_adc(void) {
     DMA0CTL |= DMAEN;
 }
 
-// DMA Interrupt Service Routine
-#if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
-    #pragma vector = DMA_VECTOR
+
+#pragma vector = DMA_VECTOR
 __interrupt void DMA_ISR(void)
-#elif defined(__GNUC__)
-void __attribute__((interrupt(DMA_VECTOR))) DMA_ISR(void)
-#else
-    #error Compiler not supported!
-#endif
 {
     // DMAIFG for the highest priority enabled DMA channel is automatically cleared
     // by accessing DMAIV if it's not 0. Or manually clear the specific flag.
     // For simplicity, we can check and clear DMA0IFG if needed, but DMAIV is better.
-    switch (__even_in_range(DMAIV, 16)) // DMAIV provides the interrupt vector [cite: 482, 484]
+    switch (__even_in_range(DMAIV, 16)) // DMAIV provides the interrupt vector
     {
         case 0:
             break; // No interrupt
@@ -242,7 +226,7 @@ void __attribute__((interrupt(DMA_VECTOR))) DMA_ISR(void)
             // Add your data processing code here or signal main loop.
             // Keep ISR short. For extensive processing, set a flag and do it in main.
             // Stop Timer_A0 to halt further ADC triggers
-            TA0CTL &= MC_0; // Clears MCx bits, effectively stopping the timer
+            TA0CTL = 0; // Clears TA0CTL, effectively stopping the timer
             break;
         case 4:
             break; // DMA1IFG
