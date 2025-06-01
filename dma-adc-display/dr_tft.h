@@ -68,8 +68,10 @@ void etft_DisplayImage(const uint8_t* image,
                        uint16_t width,
                        uint16_t height);
 
-void etft_DisplayADCVoltage(const uint16_t* voltage_array,
-                            uint16_t len,
+void etft_DisplayADCSegment(const uint16_t* segment_data_ptr,
+                            uint16_t samples_in_segment,
+                            uint16_t segment_idx_for_positioning,
+                            uint16_t num_total_segments_on_screen,
                             uint16_t fRGB,
                             uint16_t bRGB);
 

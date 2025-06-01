@@ -1,19 +1,36 @@
-#include "dr_tft.h"
-#include <msp430f6638.h>
-#include <stdint.h>
-#include <stdio.h>
-
 // Define target MCLK and XT2 crystal frequencies if using the provided init_clock()
 // These are example values, adjust them to your hardware.
 #define MCLK_FREQ 16000000UL // Example: Target MCLK at 16MHz
 #define XT2_FREQ 4000000UL // Example: XT2 crystal at 4MHz
 
-// Buffer to store ADC samples
-#define NUM_SAMPLES 300
-unsigned int adc_data[NUM_SAMPLES];
+#include "dr_tft.h"
+#include <msp430f6638.h>
+#include <stdint.h>
+#include <stdio.h>
 
-// Flag to indicate DMA transfer completion
-volatile unsigned char dma_done_flag = 0;
+// Buffer to store ADC samples
+#define SAMPLES_PER_SEGMENT 40
+#define NUM_SEGMENTS 16
+#define TOTAL_SAMPLES_ON_SCREEN (SAMPLES_PER_SEGMENT * NUM_SEGMENTS) // 640
+unsigned int adc_capture_buffer[TOTAL_SAMPLES_ON_SCREEN];
+
+// Flags/variables to coordinate ISR and main loop
+volatile unsigned char segment_data_ready_for_display[NUM_SEGMENTS] = {
+    0
+}; // ISR sets to 1 when segment_idx data is ready
+volatile unsigned int dma_completed_segment_idx =
+    0; // ISR sets this to the index of the segment it just finished filling
+volatile unsigned char new_dma_data_available = 0; // ISR sets this to 1 on any segment completion
+
+// DMA state - ISR primarily manages this for writing
+volatile unsigned int current_segment_dma_is_filling = 0;
+
+// Display state - main loop manages this
+unsigned int segment_to_display_next = 0;
+
+// Background color (can be defined or passed)
+const uint16_t bRGB_BLACK = 0x0000;
+const uint16_t fRGB_GREEN = ((0x3F << 5)); // Pre-calculate if etft_Color is not in main
 
 // Function Prototypes
 void init_clock(void);
@@ -38,24 +55,71 @@ void main(void) {
     __bis_SR_register(GIE); // Enable Global Interrupts
 
     while (1) {
-        // ADC and DMA are now running. Timer triggers ADC, ADC triggers DMA.
-        // Wait for DMA to complete 300 transfers.
-        while (!dma_done_flag) {
+        if (new_dma_data_available) {
+            new_dma_data_available = 0; // Reset general flag
+
+            // Check if the specific segment we are waiting to display is ready
+            if (segment_data_ready_for_display[segment_to_display_next]) {
+                segment_data_ready_for_display[segment_to_display_next] =
+                    0; // Mark as display processing started
+
+                const uint16_t* p_segment_data =
+                    &adc_capture_buffer[segment_to_display_next * SAMPLES_PER_SEGMENT];
+
+                etft_DisplayADCSegment(p_segment_data,
+                                       SAMPLES_PER_SEGMENT,
+                                       segment_to_display_next, // for screen positioning
+                                       NUM_SEGMENTS, // for screen positioning logic
+                                       fRGB_GREEN,
+                                       bRGB_BLACK);
+
+                // Advance to the next segment to be displayed
+                segment_to_display_next = (segment_to_display_next + 1);
+
+                if (segment_to_display_next >= NUM_SEGMENTS) {
+                    segment_to_display_next = 0; // Reset for the next display cycle
+
+                    // ---- PAUSE AND CLEAR LOGIC (User Point 2) ----
+                    // This occurs after displaying the last segment (NUM_SEGMENTS - 1)
+                    // and before the display of segment 0 of the *next* cycle.
+                    // ADC/Timer/DMA are still running to capture the next screen's data.
+                    // We pause them now to allow a clean screen wipe.
+
+                    TA0CTL = 0; // Stop Timer_A to stop ADC & DMA triggers
+                    DMA0CTL &= ~DMAEN; // Disable DMA channel to prevent any pending transfers
+
+                    // Ensure interrupts are off if critical timing for peripheral stop is needed
+                    // _DINT(); // Usually not needed if just stopping timer and DMAEN
+
+                    etft_AreaSet(0,
+                                 0,
+                                 TFT_YSIZE - 1,
+                                 TFT_XSIZE - 1,
+                                 bRGB_BLACK); // Clear entire screen
+
+                    // DMA ISR has already set 'current_segment_dma_is_filling' to 0 and
+                    // DMA0DA to '&adc_capture_buffer[0]'.
+                    // Reset any stale "ready" flags for display processing just in case.
+                    unsigned int k;
+                    for (k = 0; k < NUM_SEGMENTS; ++k) {
+                        segment_data_ready_for_display[k] = 0;
+                    }
+                    new_dma_data_available = 0; // Clear this flag as well
+
+                    // DMA0SZ is reloaded automatically.
+                    DMA0CTL |= DMAEN; // Re-enable DMA for the new acquisition cycle (segment 0)
+                    TA0CTL = TASSEL__SMCLK | MC__UP | TACLR; // Restart Timer_A
+                    // _EINT(); // If _DINT() was used
+                    // -------------------------------
+                }
+            }
+            // If the specific segment_to_display_next is not yet ready, we'll catch it in the next iteration
+            // after new_dma_data_available is set again.
+        } else {
+            // Optional: Enter Low Power Mode if no flag is set, to save power.
+            // __bis_SR_register(LPM0_bits | GIE); // Example: wakes on interrupt (like DMA_ISR)
         }
-        // DMA transfer of 300 samples is complete.
-        // adc_data array now contains the samples.
-        // process the data captured by ADC here.
-        etft_DisplayADCVoltage(adc_data, NUM_SAMPLES, (0x3F << 5), 0);
-
-        dma_done_flag = 0; // Clear the flag
-        // 1. Re-enable DMA Channel 0 (DMAEN was cleared by hardware)
-        DMA0CTL |= DMAEN;
-
-        // 2. Restart Timer_A0 to begin triggering ADC conversions for the next block
-        TA0CTL = TASSEL__SMCLK | MC__UP | TACLR; // TACLR ensures it starts fresh
-
-        // toggle an LED to indicate completion.
-        P4OUT ^= BIT5; // Turn on P4.5 LED
+        P4OUT ^= BIT5; // Toggle LED to show main loop activity
     }
 }
 
@@ -154,8 +218,8 @@ void init_adc(void) {
     // ADC12CTL1 configuration
     // ADC12SHP: Sample-and-hold pulse-mode select. SAMPCON is sourced from sampling timer. [cite: 226]
     // ADC12SHSx: Sample-and-hold source select. Select Timer_A0 TA0.1 output. (Value is 1 for TA0.1) [cite: 226]
-    // ADC12CONSEQx: Conversion sequence mode. 00b for single-channel, single-conversion. [cite: 125, 226]
-    // ADC12SSELx: ADC12 clock source select. Example: SMCLK. [cite: 226]
+    // ADC12CONSEQx: Conversion sequence mode. 03b for Repeat-single-channel. [cite: 125, 226]
+    // ADC12SSELx: ADC12 clock source select. Example: SMCLK 4MHz. [cite: 226]
     ADC12CTL1 = ADC12SHP | ADC12SHS_1 | ADC12CONSEQ_2 | ADC12SSEL_3; // SMCLK
     // ADC12SHS_1 corresponds to TA0.1
 
@@ -200,20 +264,18 @@ void init_dma_for_adc(void) {
 
     // Set DMA Destination Address (DMA0DA) [cite: 474, 475]
     // Needs to be the start address of our RAM buffer
-    __data20_write_long((unsigned long)&DMA0DA, (unsigned long)adc_data);
+    __data20_write_long((unsigned long)&DMA0DA, (unsigned long)&adc_capture_buffer[0]);
 
     // Set DMA Transfer Size (DMA0SZ) [cite: 478, 479]
     // Number of transfers before DMA interrupt
-    DMA0SZ = NUM_SAMPLES;
+    DMA0SZ = SAMPLES_PER_SEGMENT;
 
     // Enable DMA Channel 0 [cite: 464]
     DMA0CTL |= DMAEN;
 }
 
-
 #pragma vector = DMA_VECTOR
-__interrupt void DMA_ISR(void)
-{
+__interrupt void DMA_ISR(void) {
     // DMAIFG for the highest priority enabled DMA channel is automatically cleared
     // by accessing DMAIV if it's not 0. Or manually clear the specific flag.
     // For simplicity, we can check and clear DMA0IFG if needed, but DMAIV is better.
@@ -222,11 +284,30 @@ __interrupt void DMA_ISR(void)
         case 0:
             break; // No interrupt
         case 2: // DMA0IFG
-            dma_done_flag = 1; // Set flag to indicate completion
-            // Add your data processing code here or signal main loop.
-            // Keep ISR short. For extensive processing, set a flag and do it in main.
-            // Stop Timer_A0 to halt further ADC triggers
-            TA0CTL = 0; // Clears TA0CTL, effectively stopping the timer
+            // The segment 'current_segment_dma_is_filling' has just been filled.
+            dma_completed_segment_idx = current_segment_dma_is_filling;
+            segment_data_ready_for_display[dma_completed_segment_idx] = 1;
+            new_dma_data_available = 1;
+
+            // Advance to the next segment for DMA capture
+            current_segment_dma_is_filling += 1;
+            if (current_segment_dma_is_filling >= NUM_SEGMENTS) {
+                current_segment_dma_is_filling = 0;
+                // This indicates a full screen's worth of data acquisition has just been set up to start/continue with segment 0.
+                // The main loop will handle pausing AFTER displaying the last segment of the previous cycle.
+            }
+
+            // Reconfigure DMA destination for the NEW 'current_segment_dma_is_filling'
+            unsigned long next_segment_start_addr =
+                (unsigned long)&adc_capture_buffer[current_segment_dma_is_filling
+                                                   * SAMPLES_PER_SEGMENT];
+            __data20_write_long((unsigned long)&DMA0DA, next_segment_start_addr);
+
+            // DMA0SZ is automatically reloaded from its temporary register when it decrements to zero and DMAIFG is set[cite: 41, 53].
+            // So, no need to reset DMA0SZ here for DMADT_0.
+
+            // Re-enable DMA Channel 0 (DMAEN was cleared by hardware with DMADT_0 after DMA0SZ transfers) [cite: 34]
+            DMA0CTL |= DMAEN;
             break;
         case 4:
             break; // DMA1IFG
