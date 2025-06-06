@@ -84,18 +84,6 @@ void main(void) {
 
                 if (segment_to_display_next >= NUM_SEGMENTS) {
                     segment_to_display_next = 0; // Reset for the next display cycle
-
-                    // ---- PAUSE AND CLEAR LOGIC (User Point 2) ----
-                    // This occurs after displaying the last segment (NUM_SEGMENTS - 1)
-                    // and before the display of segment 0 of the *next* cycle.
-                    // ADC/Timer/DMA are still running to capture the next screen's data.
-                    // We pause them now to allow a clean screen wipe.
-
-                    TA0CTL = 0; // Stop Timer_A to stop ADC & DMA triggers
-                    DMA0CTL &= ~DMAEN; // Disable DMA channel to prevent any pending transfers
-
-                    // Ensure interrupts are off if critical timing for peripheral stop is needed
-                    // _DINT(); // Usually not needed if just stopping timer and DMAEN
                     // DMA ISR has already set 'current_segment_dma_is_filling' to 0 and
                     // DMA0DA to '&adc_capture_buffer[0]'.
                     // Reset any stale "ready" flags for display processing just in case.
@@ -104,12 +92,6 @@ void main(void) {
                         segment_data_ready_for_display[k] = 0;
                     }
                     new_dma_data_available = 0; // Clear this flag as well
-
-                    // DMA0SZ is reloaded automatically.
-                    DMA0CTL |= DMAEN; // Re-enable DMA for the new acquisition cycle (segment 0)
-                    TA0CTL = TASSEL__SMCLK | MC__UP | TACLR; // Restart Timer_A
-                    // _EINT(); // If _DINT() was used
-                    // -------------------------------
                 }
             }
             // If the specific segment_to_display_next is not yet ready, we'll catch it in the next iteration
