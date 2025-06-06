@@ -1,9 +1,11 @@
 // Define target MCLK and XT2 crystal frequencies if using the provided init_clock()
 // These are example values, adjust them to your hardware.
-#define MCLK_FREQ 16000000UL // Example: Target MCLK at 16MHz
+#define MCLK_FREQ 20000000UL // Example: Target MCLK at 20MHz
+#define SMCLK_FREQ 4000000UL
 #define XT2_FREQ 4000000UL // Example: XT2 crystal at 4MHz
 
 #include "dr_tft.h"
+#include "uart_lib.h"
 #include <msp430f6638.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -38,6 +40,7 @@ void init_gpio(void);
 void init_timer_for_adc(void);
 void init_adc(void);
 void init_dma_for_adc(void);
+void send_ecg_frame(const uint16_t* data, uint16_t num_samples);
 
 void main(void) {
     WDTCTL = WDTPW + WDTHOLD; // Stop watchdog timer
@@ -46,6 +49,7 @@ void main(void) {
     initTFT();
     init_clock(); // Initialize clock system
     init_gpio(); // Initialize GPIO (e.g., for ADC input pin function)
+    uart_init(BAUD_115200);
     init_timer_for_adc(); // Initialize Timer_A0 to trigger ADC at 200Hz
     init_adc(); // Initialize ADC12_A module
     init_dma_for_adc(); // Initialize DMA Channel 0
@@ -66,6 +70,8 @@ void main(void) {
                 const uint16_t* p_segment_data =
                     &adc_capture_buffer[segment_to_display_next * SAMPLES_PER_SEGMENT];
 
+                send_ecg_frame(p_segment_data,
+                               SAMPLES_PER_SEGMENT); // Send the segment data over UART
                 etft_DisplayADCSegment(p_segment_data,
                                        SAMPLES_PER_SEGMENT,
                                        segment_to_display_next, // for screen positioning
@@ -91,11 +97,11 @@ void main(void) {
                     // Ensure interrupts are off if critical timing for peripheral stop is needed
                     // _DINT(); // Usually not needed if just stopping timer and DMAEN
 
-                    etft_AreaSet(0,
-                                 0,
-                                 TFT_YSIZE - 1,
-                                 TFT_XSIZE - 1,
-                                 bRGB_BLACK); // Clear entire screen
+                    // etft_AreaSet(0,
+                    //              0,
+                    //              TFT_YSIZE - 1,
+                    //              TFT_XSIZE - 1,
+                    //              bRGB_BLACK); // Clear entire screen
 
                     // DMA ISR has already set 'current_segment_dma_is_filling' to 0 and
                     // DMA0DA to '&adc_capture_buffer[0]'.
@@ -189,7 +195,7 @@ void init_timer_for_adc(void) {
     // Timer_period = 8,000,000 / 200 = 40,000 cycles. This fits in TA0CCR0.
 
     TA0CTL = TASSEL__SMCLK | MC__UP | TACLR; // SMCLK, Up mode, Clear TAR
-    TA0CCR0 = (MCLK_FREQ / 200)
+    TA0CCR0 = (SMCLK_FREQ / 200)
         - 1; // Period for 200Hz. Using MCLK_FREQ as placeholder, ideally use SMCLK_FREQ.
     // If SMCLK is different from MCLK, adjust this.
     // For example, if SMCLK is XT2_FREQ: TA0CCR0 = (XT2_FREQ / 200) - 1;
@@ -272,6 +278,33 @@ void init_dma_for_adc(void) {
 
     // Enable DMA Channel 0 [cite: 464]
     DMA0CTL |= DMAEN;
+}
+
+// 函数：打包并发送一帧ECG数据
+void send_ecg_frame(const uint16_t* data, uint16_t num_samples) {
+    uint8_t frame_buffer[2 + 1 + SAMPLES_PER_SEGMENT * 2 + 1];
+    uint8_t checksum = 0;
+    uint16_t i;
+    uint16_t payload_len = num_samples * 2;
+
+    // 1. 填充帧头和长度
+    frame_buffer[0] = 0xAA; // 帧头1
+    frame_buffer[1] = 0x55; // 帧头2
+    frame_buffer[2] = payload_len; // 长度
+
+    // 2. 拷贝数据负载 (因为是小端架构，直接内存拷贝即可)
+    memcpy(&frame_buffer[3], data, payload_len);
+
+    // 3. 计算校验和
+    for (i = 0; i < payload_len; i++) {
+        checksum += frame_buffer[3 + i];
+    }
+
+    // 4. 填充校验和
+    frame_buffer[3 + payload_len] = checksum;
+
+    // 5. 通过UART库发送整个数据帧
+    uart_write_buffer(frame_buffer, sizeof(frame_buffer));
 }
 
 #pragma vector = DMA_VECTOR
