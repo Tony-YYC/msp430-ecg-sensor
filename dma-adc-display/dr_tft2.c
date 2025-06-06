@@ -198,8 +198,13 @@ void etft_DisplayADCSegment(const uint16_t* segment_data_ptr,
 
     uint16_t x_start_on_screen_for_segment = segment_idx_for_positioning * segment_pixel_width;
 
-    uint16_t prev_x_coord_on_screen = 0; // These will be screen absolute coordinates
-    uint16_t prev_y_coord_on_screen = 0;
+    etft_AreaSet(x_start_on_screen_for_segment,
+                0,
+                x_start_on_screen_for_segment + segment_pixel_width,
+                TFT_XSIZE - 1,
+                bRGB); // Clear this segment
+    static uint16_t prev_x_coord_on_screen = 0; // These will be screen absolute coordinates
+    static uint16_t prev_y_coord_on_screen = 0;
 
     // Downsampling: 'samples_in_segment' (e.g., 40) to 'segment_pixel_width' (e.g., 20) columns.
     // Each pixel column will represent an average of (samples_in_segment / segment_pixel_width) samples.
@@ -249,7 +254,7 @@ void etft_DisplayADCSegment(const uint16_t* segment_data_ptr,
         if (current_y_coord_on_screen >= screen_height)
             current_y_coord_on_screen = screen_height - 1;
 
-        if (i > 0) { // If not the first point in this segment's drawing loop
+        if (i > 0 || segment_idx_for_positioning > 0) { // If not the first point in this segment's drawing loop
             etft_DrawLinePriv(prev_x_coord_on_screen,
                               prev_y_coord_on_screen,
                               current_x_coord_on_screen,

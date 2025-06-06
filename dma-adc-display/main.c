@@ -49,7 +49,7 @@ void main(void) {
     initTFT();
     init_clock(); // Initialize clock system
     init_gpio(); // Initialize GPIO (e.g., for ADC input pin function)
-    uart_init(BAUD_115200);
+    uart_init(BAUD_9600);
     init_timer_for_adc(); // Initialize Timer_A0 to trigger ADC at 200Hz
     init_adc(); // Initialize ADC12_A module
     init_dma_for_adc(); // Initialize DMA Channel 0
@@ -96,13 +96,6 @@ void main(void) {
 
                     // Ensure interrupts are off if critical timing for peripheral stop is needed
                     // _DINT(); // Usually not needed if just stopping timer and DMAEN
-
-                    // etft_AreaSet(0,
-                    //              0,
-                    //              TFT_YSIZE - 1,
-                    //              TFT_XSIZE - 1,
-                    //              bRGB_BLACK); // Clear entire screen
-
                     // DMA ISR has already set 'current_segment_dma_is_filling' to 0 and
                     // DMA0DA to '&adc_capture_buffer[0]'.
                     // Reset any stale "ready" flags for display processing just in case.
@@ -125,7 +118,7 @@ void main(void) {
             // Optional: Enter Low Power Mode if no flag is set, to save power.
             // __bis_SR_register(LPM0_bits | GIE); // Example: wakes on interrupt (like DMA_ISR)
         }
-        P4OUT ^= BIT5; // Toggle LED to show main loop activity
+        // P4OUT ^= BIT5; // Toggle LED to show main loop activity (DONT USE THIS ANYMORE! Conflict with UART)
     }
 }
 
@@ -175,15 +168,15 @@ void init_clock() {
 
 void init_gpio(void) {
     // Configure ADC input pin
-    // For ADC12_A Channel 15 (A15), this is typically P6.7 on MSP430F6638
-    // Set P6SEL.7 = 1 for A15 function.
-    P6SEL |= BIT7; // Select P6.7 for A15 input
-    P6DIR &= ~BIT7; // Set P6.7 as input
+    // For ADC12_A Channel 0 (A0), this is typically P6.0 on MSP430F6638
+    // Set P6SEL.0 = 1 for A15 function.
+    P6SEL |= BIT0; // Select P6.0 for A15 input
+    P6DIR &= ~BIT0; // Set P6.0 as input
 
     // Example LED (optional, for debugging)
-    P4DIR |= BIT5;
-    P4REN |= BIT5;
-    P4OUT &= ~BIT5;
+    // P4DIR |= BIT5;
+    // P4REN |= BIT5;
+    // P4OUT &= ~BIT5;
 }
 
 void init_timer_for_adc(void) {
@@ -234,9 +227,9 @@ void init_adc(void) {
     ADC12CTL2 = ADC12RES_2; // 12-bit resolution
 
     // ADC12MCTL0: Conversion memory control for ADC12MEM0
-    // ADC12INCHx: Input channel select. Using A15 as per your example. [cite: 242]
+    // ADC12INCHx: Input channel select. Using A0 (connected to P6.0) as ECG signal input. [cite: 242]
     // ADC12SREFx: Voltage reference select. Default (000b) is VR+ = AVCC, VR- = AVSS. [cite: 241]
-    ADC12MCTL0 = ADC12INCH_15;
+    ADC12MCTL0 = ADC12INCH_0;
 
     // Disable ADC12IFG0 interrupt because DMA will use this flag as a trigger [cite: 362]
     ADC12IE &= ~ADC12IFG0; // Clear interrupt enable for ADC12MEM0
