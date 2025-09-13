@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 // Buffer to store ADC samples
-#define SAMPLES_PER_SEGMENT 40
+#define SAMPLES_PER_SEGMENT 20
 #define NUM_SEGMENTS 16
 #define TOTAL_SAMPLES_ON_SCREEN (SAMPLES_PER_SEGMENT * NUM_SEGMENTS) // 640
 unsigned int adc_capture_buffer[TOTAL_SAMPLES_ON_SCREEN];
@@ -170,7 +170,7 @@ void init_timer_for_adc(void) {
     // Timer_period = 8,000,000 / 200 = 40,000 cycles. This fits in TA0CCR0.
 
     TA0CTL = TASSEL__SMCLK | MC__UP | TACLR; // SMCLK, Up mode, Clear TAR
-    TA0CCR0 = (SMCLK_FREQ / 200)
+    TA0CCR0 = (SMCLK_FREQ / 500)
         - 1; // Period for 200Hz. Using MCLK_FREQ as placeholder, ideally use SMCLK_FREQ.
     // If SMCLK is different from MCLK, adjust this.
     // For example, if SMCLK is XT2_FREQ: TA0CCR0 = (XT2_FREQ / 200) - 1;
